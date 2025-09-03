@@ -1,0 +1,9 @@
+# .gitignore
+node_modules/
+.env
+*.log
+.DS_Store
+config/*.pem
+screenshots/
+automacao.js 
+.test-conexao.js    
