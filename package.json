@@ -1,13 +1,23 @@
 {
-  "name": "meu-projeto-puppeteer",
+  "name": "automacao-projeto",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Sistema de automação para criação de contas e postagem de conteúdo",
+  "main": "automacao.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node automacao.js",
+    "dev": "nodemon automacao.js",
+    "setup": "npm install && cp config/example.env .env",
+    "test": "node test-conexao.js",
+    "db-backup": "node scripts/backup-db.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "automation",
+    "puppeteer",
+    "postgresql",
+    "web-automation"
+  ],
+  "author": "RomuloPales",
+  "license": "MIT",
   "dependencies": {
     "axios": "^1.11.0",
     "cheerio": "^1.1.2",
@@ -17,7 +27,14 @@
     "fs-extra": "^11.3.1",
     "puppeteer": "^24.18.0",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "pg": "^8.11.0"
   },
-  "description": ""
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
 }
