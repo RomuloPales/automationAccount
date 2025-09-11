@@ -2,7 +2,7 @@
 const axios = require("axios");
 const cheerio = require("cheerio");
 const fs = require("fs");
-const db = require("./db"); // Agora aponta para o Neon
+const db = require("./db"); // Importa o módulo de banco de dados
 
 async function scrapeQuestoes(url) {
   try {
@@ -30,7 +30,7 @@ async function scrapeQuestoes(url) {
 
       const resposta = questao.find(".question-answer .answer-text").text().trim();
 
-      // Insert no Neon
+      // Insert no supabase
       await db.query(
         `INSERT INTO questoes (enunciado, alternativas, resposta, materia, assunto)
          VALUES ($1, $2, $3, $4, $5)
@@ -41,7 +41,7 @@ async function scrapeQuestoes(url) {
       console.log(`✓ Questão ${i + 1} salva: ${enunciado.slice(0, 50)}...`);
     }
 
-    console.log(`✅ Todas questões de ${assunto} salvas no Neon!\\n`);
+    console.log(`✅ Todas questões de ${assunto} salvas no Supabase!\\n`);
   } catch (err) {
     console.error("❌ Erro no scrape:", err.message);
   }

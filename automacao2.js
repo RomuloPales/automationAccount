@@ -1,7 +1,35 @@
 const puppeteer = require("puppeteer");
 const db = require("./db");
-let consecutiveErrors = 0;
-const MAX_ERRORS_BEFORE_RECOVERY = 3;
+
+// Obter a porta da linha de comando
+const port = process.argv[2] || 9222; // Usa porta 9222 por padrão
+
+// Função para encontrar ou criar página do Brainly
+async function getBrainlyPage(browser) {
+    const pages = await browser.pages();
+    
+    // Tentar encontrar página do Brainly
+    let brainlyPage = pages.find(page => 
+        page.url().includes('brainly.com') || 
+        page.url().includes('brainly.com.br') ||
+        page.url().includes('brainly')
+    );
+
+    // Se não encontrou, usar a primeira página ou criar nova
+    if (!brainlyPage) {
+        brainlyPage = pages[0] || await browser.newPage();
+        if (!brainlyPage.url().includes('brainly')) {
+            console.log("🌐 Navegando para Brainly...");
+            await brainlyPage.goto('https://brainly.com.br', { 
+                waitUntil: 'networkidle0',
+                timeout: 15000 
+            });
+        }
+    }
+
+    await brainlyPage.bringToFront();
+    return brainlyPage;
+}
 
 // Função para gerar email aleatório
 function generateRandomEmail() {
@@ -25,13 +53,13 @@ function cleanQuestionText(text) {
     return text.replace(/Ver resposta.*/i, '').trim();
 }
 
-// Função para obter perguntas do banco
+// Função para obter perguntas do banco -- IMPORTANTE
 async function getPhysicsQuestions(limit) {
     try {
         const result = await db.query(`
             SELECT id, enunciado 
             FROM questoes 
-            WHERE materia = 'Fisica'
+            WHERE materia = 'Matematica' 
             ORDER BY RANDOM() 
             LIMIT $1
         `, [limit]);
@@ -179,8 +207,8 @@ async function postQuestion(page, question) {
                 }
                 
                 if (subjectSelect) {
-                    // Selecionar a matéria (com o valor)
-                    await subjectSelect.select('2');
+                    // Selecionar a matéria (com o valor) --- IMPORTANTE --- 
+                    await subjectSelect.select('1');
                     console.log("✅ Matéria selecionada");
                     
                     // Aguardar 2 segundos após selecionar a matéria
@@ -555,18 +583,29 @@ async function executarCicloCompleto(browser, cycleCount) {
     }
 }
 
-// LOOP PRINCIPAL
+// LOOP PRINCIPAL COMPLETO
 (async () => {
     try {
-        const browser = await puppeteer.connect({ browserURL: 'http://localhost:9222' });
-        console.log("✅ Browser conectado. Iniciando loop infinito...");
-        console.log("⏸️  Pressione Ctrl+C para parar");
+        console.log(`🔗 Conectando à instância na porta ${port}...`);
+        
+        const browser = await puppeteer.connect({
+            browserURL: `http://localhost:${port}`,
+            defaultViewport: null
+        });
+
+        console.log("✅ Conectado ao navegador existente!");
+        
+        // Obter página do Brainly
+        const page = await getBrainlyPage(browser);
+        console.log("✅ Página do Brainly preparada");
 
         let cycleCount = 1;
         let consecutiveErrors = 0;
         const MAX_ERRORS_BEFORE_RECOVERY = 3;
         
         while (true) {
+            console.log(`\n🔄 INICIANDO CICLO ${cycleCount} NA PORTA ${port} 🔄`);
+            
             const success = await executarCicloCompleto(browser, cycleCount);
             
             if (success) {
@@ -580,12 +619,8 @@ async function executarCicloCompleto(browser, cycleCount) {
                 if (consecutiveErrors >= MAX_ERRORS_BEFORE_RECOVERY) {
                     console.log('🚨 3 erros consecutivos! Executando recuperação...');
                     
-                    // Encontrar página ativa do Brainly
-                    const pages = await browser.pages();
-                    const activePage = pages.find(page => page.url().includes('brainly')) || pages[0];
-                    
                     // Executar recuperação simples
-                    await recuperacaoSimples(activePage);
+                    await recuperacaoSimples(page);
                     
                     // Resetar contador após recuperação
                     consecutiveErrors = 0;
@@ -606,5 +641,6 @@ async function executarCicloCompleto(browser, cycleCount) {
         
     } catch (error) {
         console.log("❌ Erro no loop principal:", error.message);
+        console.log("💡 Certifique-se de que o Chrome foi iniciado com: --remote-debugging-port=" + port);
     }
 })();
