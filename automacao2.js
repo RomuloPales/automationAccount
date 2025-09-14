@@ -1,5 +1,7 @@
 const puppeteer = require("puppeteer");
 const db = require("./db");
+const nomes = require('./nomes.json');
+const sobrenomes = require('./sobrenomes.json');
 
 // Obter a porta da linha de comando
 const port = process.argv[2] || 9222; // Usa porta 9222 por padrão
@@ -38,9 +40,21 @@ function generateRandomEmail() {
     return `user${randomString}${randomNumber}@gmail.com`;
 }
 
+// Função para gerar username realista
+function generateRealisticUsername() {
+    const nome = nomes[Math.floor(Math.random() * nomes.length)];
+    const sobrenome = sobrenomes[Math.floor(Math.random() * sobrenomes.length)];
+    const numero = Math.floor(Math.random() * 900) + 10;
+    
+    const cleanNome = nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const cleanSobrenome = sobrenome.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+    return `${cleanNome.toLowerCase()}${cleanSobrenome.toLowerCase()}${numero}`;
+}
+
 // Função para gerar idade aleatória entre 18 e 25
 function generateRandomAge() {
-    return Math.floor(Math.random() * 8) + 18;
+    return Math.floor(Math.random() * 11) + 18;
 }
 
 // Função para sortear número de perguntas (2-6)
@@ -59,7 +73,7 @@ async function getPhysicsQuestions(limit) {
         const result = await db.query(`
             SELECT id, enunciado 
             FROM questoes 
-            WHERE materia = 'Matematica' 
+            WHERE materia = 'Fisica' 
             ORDER BY RANDOM() 
             LIMIT $1
         `, [limit]);
@@ -122,7 +136,8 @@ async function recuperacaoSimples(page) {
     }
 }
 
-async function postQuestion(page, question) {
+// ---> MUDANÇA 2 <---
+async function postQuestion(page, question, pointsPerQuestion) {
     try {
         console.log("📝 Iniciando processo de criação de pergunta...");
         
@@ -208,9 +223,18 @@ async function postQuestion(page, question) {
                 
                 if (subjectSelect) {
                     // Selecionar a matéria (com o valor) --- IMPORTANTE --- 
-                    await subjectSelect.select('1');
+                    await subjectSelect.select('2');
                     console.log("✅ Matéria selecionada");
-                    
+
+                    // ---> LÓGICA DE PONTOS <---
+                    const pointsSelect = await page.$('select[data-testid="add_question_points"]');
+                    if (pointsSelect) {
+                        await pointsSelect.select(pointsPerQuestion.toString());
+                        console.log(`✅ Pontos definidos para: ${pointsPerQuestion}`);
+                    } else {
+                        console.log("⚠️  Dropdown de pontos não encontrado, usando o padrão.");
+                    }
+                                        
                     // Aguardar 2 segundos após selecionar a matéria
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     
@@ -379,8 +403,11 @@ async function executarCicloCompleto(browser, cycleCount) {
     try {
         console.log(`\n🔄 INICIANDO CICLO ${cycleCount} 🔄`);
         
+        // ---> MUDANÇA 1 <---
         const questionCount = getRandomQuestionCount();
-        console.log(`🎯 Vou postar ${questionCount} perguntas`);
+        const pointsPerQuestion = Math.floor(60 / questionCount);
+        console.log(`🎯 Vou postar ${questionCount} perguntas, usando ${pointsPerQuestion} pontos em cada.`);
+
 
         const questions = await getPhysicsQuestions(questionCount);
         if (!questions || questions.length === 0) {
@@ -461,6 +488,51 @@ async function executarCicloCompleto(browser, cycleCount) {
             console.log("✅ Botão 'Fazer cadastro' clicado com sucesso!");
             await new Promise(resolve => setTimeout(resolve, 3000));
             
+            // --- INÍCIO DA LÓGICA DE VALIDAÇÃO DE USUÁRIO ---
+            let usernameInput = await signupPage.$('input[data-testid="registration_form_nick_input"]');
+            if (!usernameInput) usernameInput = await signupPage.$('input[name="nick"]');
+            
+            if (usernameInput) {
+                let isUsernameAccepted = false;
+                let attempts = 0;
+                const maxAttempts = 10; // Limite para não ficar em loop infinito
+
+                while (!isUsernameAccepted && attempts < maxAttempts) {
+                    attempts++;
+                    const realisticUsername = generateRealisticUsername();
+                    
+                    // Limpa o campo antes de digitar
+                    await usernameInput.click({ clickCount: 3 });
+                    await usernameInput.press('Backspace');
+
+                    // Digita o novo username
+                    await usernameInput.type(realisticUsername, { delay: 30 });
+                    console.log(`(${attempts}/${maxAttempts}) Tentando username: ${realisticUsername}`);
+                    
+                    // Espera 2 segundos para o site validar
+                    await new Promise(resolve => setTimeout(resolve, 2000)); 
+
+                    // Verifica se a mensagem de erro apareceu
+                    const errorElement = await signupPage.$('div[data-testid="registration_form_nick_input_error_message"]');
+                    
+                    if (errorElement) {
+                        console.log("    ⚠️  Nome de usuário já está em uso. Tentando outro...");
+                        // Se o erro existe, o loop vai continuar
+                    } else {
+                        console.log(`    ✅ Username '${realisticUsername}' foi aceito!`);
+                        isUsernameAccepted = true; // Se o erro não existe, sai do loop
+                    }
+                }
+
+                if (!isUsernameAccepted) {
+                    throw new Error(`Não foi possível encontrar um username único após ${maxAttempts} tentativas.`);
+                }
+
+            } else {
+                console.log("⚠️  Campo de nome de usuário (nick) não encontrado, prosseguindo...");
+            }
+            // --- FIM DA LÓGICA DE VALIDAÇÃO DE USUÁRIO ---
+                
             // PREENCHER SENHA
             let passwordInput = await signupPage.$('input[data-testid="password_input"]');
             if (!passwordInput) passwordInput = await signupPage.$('input[type="password"]');
@@ -486,87 +558,96 @@ async function executarCicloCompleto(browser, cycleCount) {
                     console.log(`✅ Idade selecionada: ${randomAge} anos`);
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     
-                    // SELECIONAR "FERRAMENTA DE PESQUISA"
+                    // --- INÍCIO DA LÓGICA DE SELEÇÃO ALEATÓRIA ---
                     let originSelect = await signupPage.$('select[data-testid="origin_input"]');
                     if (!originSelect) originSelect = await signupPage.$('select[name="origin"]');
                     if (!originSelect) originSelect = await signupPage.$('select#origin');
                     
                     if (originSelect) {
-                        await originSelect.select('SEARCH');
-                        console.log("✅ Selecionado: Ferramenta de pesquisa");
+                        const originOptions = ['FAMILY', 'FRIENDS', 'TV', 'SOCIAL_MEDIA', 'SEARCH', 'OTHER'];
+                        const randomOrigin = originOptions[Math.floor(Math.random() * originOptions.length)];
+                        
+                        await originSelect.select(randomOrigin);
+
+                        const originMap = {
+                            'FAMILY': 'Família', 'FRIENDS': 'Amigos', 'TV': 'Propaganda',
+                            'SOCIAL_MEDIA': 'Redes sociais', 'SEARCH': 'Ferramenta de pesquisa', 'OTHER': 'Outro'
+                        };
+                        console.log(`✅ Origem selecionada aleatoriamente: ${originMap[randomOrigin]}`);
                         await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                    // --- FIM DA LÓGICA DE SELEÇÃO ALEATÓRIA ---
                         
-                        // MARCAR CHECKBOX DOS TERMOS
-                        let tosCheckbox = await signupPage.$('input[data-testid="tos_input"]');
-                        if (!tosCheckbox) tosCheckbox = await signupPage.$('input#tos');
-                        if (!tosCheckbox) tosCheckbox = await signupPage.$('input[name="tos"]');
-                        if (!tosCheckbox) tosCheckbox = await signupPage.$('input[type="checkbox"][required]');
-                        
-                        if (tosCheckbox) {
-                            const isChecked = await tosCheckbox.evaluate(checkbox => checkbox.checked);
-                            if (!isChecked) {
-                                await tosCheckbox.evaluate(checkbox => checkbox.click());
-                                console.log("✅ Checkbox dos termos marcado");
-                                
-                                // CLICAR NO RADIO BUTTON "SOU ALUNO(A)"
-                                let studentRadio = await signupPage.$('input[data-testid="accountType_STUDENT"]');
-                                if (!studentRadio) studentRadio = await signupPage.$('input#accountType-STUDENT');
-                                if (!studentRadio) studentRadio = await signupPage.$('input[name="accountType"][value="STUDENT"]');
-                                if (!studentRadio) {
-                                    const studentLabel = await signupPage.$x('//label[.//h1[contains(., "Sou aluno")]] | //label[.//*[contains(text(), "Sou aluno")]]');
-                                    if (studentLabel.length > 0) {
-                                        await studentLabel[0].evaluate(label => label.click());
-                                        console.log("✅ Radio button 'Sou aluno(a)' clicado via label");
-                                    }
+                    // MARCAR CHECKBOX DOS TERMOS
+                    let tosCheckbox = await signupPage.$('input[data-testid="tos_input"]');
+                    if (!tosCheckbox) tosCheckbox = await signupPage.$('input#tos');
+                    if (!tosCheckbox) tosCheckbox = await signupPage.$('input[name="tos"]');
+                    if (!tosCheckbox) tosCheckbox = await signupPage.$('input[type="checkbox"][required]');
+                    
+                    if (tosCheckbox) {
+                        const isChecked = await tosCheckbox.evaluate(checkbox => checkbox.checked);
+                        if (!isChecked) {
+                            await tosCheckbox.evaluate(checkbox => checkbox.click());
+                            console.log("✅ Checkbox dos termos marcado");
+                            
+                            // CLICAR NO RADIO BUTTON "SOU ALUNO(A)"
+                            let studentRadio = await signupPage.$('input[data-testid="accountType_STUDENT"]');
+                            if (!studentRadio) studentRadio = await signupPage.$('input#accountType-STUDENT');
+                            if (!studentRadio) studentRadio = await signupPage.$('input[name="accountType"][value="STUDENT"]');
+                            if (!studentRadio) {
+                                const studentLabel = await signupPage.$x('//label[.//h1[contains(., "Sou aluno")]] | //label[.//*[contains(text(), "Sou aluno")]]');
+                                if (studentLabel.length > 0) {
+                                    await studentLabel[0].evaluate(label => label.click());
+                                    console.log("✅ Radio button 'Sou aluno(a)' clicado via label");
                                 }
-                                
-                                if (studentRadio) {
-                                    await studentRadio.evaluate(radio => radio.click());
-                                    console.log("✅ Radio button 'Sou aluno(a)' clicado");
-                                }
-                                
-                                await new Promise(resolve => setTimeout(resolve, 2000));
-                                
-                                // CLICAR NO BOTÃO "CRIAR CONTA"
-                                let createAccountButton = await signupPage.$('button[data-testid="registration_other_fields_submit_button"]');
-                                if (!createAccountButton) {
-                                    createAccountButton = await signupPage.$x('//button[contains(., "Criar conta")] | //button[contains(., "Finalizar cadastro")]');
-                                    if (createAccountButton.length > 0) createAccountButton = createAccountButton[0];
-                                }
-                                
-                                if (createAccountButton) {
-                                    const isDisabled = await createAccountButton.evaluate(btn => btn.disabled);
-                                    if (!isDisabled) {
-                                        await createAccountButton.evaluate(btn => btn.click());
-                                        console.log("✅ Botão 'Criar conta' clicado com sucesso!");
-                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                            }
+                            
+                            if (studentRadio) {
+                                await studentRadio.evaluate(radio => radio.click());
+                                console.log("✅ Radio button 'Sou aluno(a)' clicado");
+                            }
+                            
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            
+                            // CLICAR NO BOTÃO "CRIAR CONTA"
+                            let createAccountButton = await signupPage.$('button[data-testid="registration_other_fields_submit_button"]');
+                            if (!createAccountButton) {
+                                createAccountButton = await signupPage.$x('//button[contains(., "Criar conta")] | //button[contains(., "Finalizar cadastro")]');
+                                if (createAccountButton.length > 0) createAccountButton = createAccountButton[0];
+                            }
+                            
+                            if (createAccountButton) {
+                                const isDisabled = await createAccountButton.evaluate(btn => btn.disabled);
+                                if (!isDisabled) {
+                                    await createAccountButton.evaluate(btn => btn.click());
+                                    console.log("✅ Botão 'Criar conta' clicado com sucesso!");
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    
+                                    await signupPage.goto('https://brainly.com.br/', { waitUntil: 'networkidle0' });
+                                    console.log("🌐 Redirecionado para: https://brainly.com.br/");
+                                    await new Promise(resolve => setTimeout(resolve, 3000));
+                                    
+                                    // POSTAR PERGUNTAS
+                                    for (let i = 0; i < questions.length; i++) {
+                                        console.log(`\n📋 Postando pergunta ${i + 1} de ${questions.length}`);
+                                        console.log(`📝 ${questions[i].enunciado.substring(0, 100)}...`);
                                         
-                                        await signupPage.goto('https://brainly.com.br/', { waitUntil: 'networkidle0' });
-                                        console.log("🌐 Redirecionado para: https://brainly.com.br/");
-                                        await new Promise(resolve => setTimeout(resolve, 3000));
+                                        const success = await postQuestion(signupPage, questions[i], pointsPerQuestion);
                                         
-                                        // POSTAR PERGUNTAS
-                                        for (let i = 0; i < questions.length; i++) {
-                                            console.log(`\n📋 Postando pergunta ${i + 1} de ${questions.length}`);
-                                            console.log(`📝 ${questions[i].enunciado.substring(0, 100)}...`);
-                                            
-                                            const success = await postQuestion(signupPage, questions[i]);
-                                            
-                                            if (success) {
-                                                console.log("⏳ Aguardando 10 segundos antes da próxima pergunta...");
-                                                await new Promise(resolve => setTimeout(resolve, 10000));
-                                                await signupPage.goto('https://brainly.com.br/', { waitUntil: 'networkidle0' });
-                                                console.log("🌐 Voltando para a página inicial");
-                                                await new Promise(resolve => setTimeout(resolve, 3000));
-                                            }
+                                        if (success) {
+                                            console.log("⏳ Aguardando 10 segundos antes da próxima pergunta...");
+                                            await new Promise(resolve => setTimeout(resolve, 10000));
+                                            await signupPage.goto('https://brainly.com.br/', { waitUntil: 'networkidle0' });
+                                            console.log("🌐 Voltando para a página inicial");
+                                            await new Promise(resolve => setTimeout(resolve, 3000));
                                         }
-                                        
-                                        console.log("🎉 Todas as perguntas foram postadas com sucesso!");
-                                        
-                                        // FAZER LOGOUT
-                                        await fazerLogout(signupPage);
-                                        return true;
                                     }
+                                    
+                                    console.log("🎉 Todas as perguntas foram postadas com sucesso!");
+                                    
+                                    // FAZER LOGOUT
+                                    await fazerLogout(signupPage);
+                                    return true;
                                 }
                             }
                         }
@@ -610,31 +691,26 @@ async function executarCicloCompleto(browser, cycleCount) {
             
             if (success) {
                 console.log(`\n✅ Ciclo ${cycleCount} concluído com sucesso!`);
-                consecutiveErrors = 0; // Resetar contador de erros
+                consecutiveErrors = 0; 
             } else {
                 console.log(`\n❌ Ciclo ${cycleCount} falhou.`);
                 consecutiveErrors++;
                 
-                // VERIFICAR SE PRECISA DE RECUPERAÇÃO
                 if (consecutiveErrors >= MAX_ERRORS_BEFORE_RECOVERY) {
                     console.log('🚨 3 erros consecutivos! Executando recuperação...');
                     
-                    // Executar recuperação simples
                     await recuperacaoSimples(page);
                     
-                    // Resetar contador após recuperação
                     consecutiveErrors = 0;
                     console.log('🔄 Recuperação concluída. Reiniciando ciclos...');
                     
-                    // Aguardar mais tempo após recuperação
                     await new Promise(resolve => setTimeout(resolve, 10000));
-                    continue; // Pular o wait normal abaixo
+                    continue; 
                 }
             }
             
             cycleCount++;
             
-            // Aguardar um pouco antes do próximo ciclo
             console.log("⏳ Aguardando 5 segundos antes do próximo ciclo...");
             await new Promise(resolve => setTimeout(resolve, 5000));
         }
