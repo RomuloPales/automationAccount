@@ -96,6 +96,30 @@ async function getPhysicsQuestions(limit) {
     }
 }
 
+// Função para salvar conta no banco
+async function saveBrainlyAccount(email, password) {
+  try {
+    const query = `
+      INSERT INTO brainly_contas (email, senha)
+      VALUES ($1, $2)
+      RETURNING id
+    `;
+    const result = await db.query(query, [email, password]);
+    console.log(`✅ Conta [${email}] salva no banco de dados com ID: ${result.rows[0].id}`);
+    return true;
+
+  } catch (error) {
+    // Código '23505' é "unique_violation" (email duplicado)
+    if (error.code === '23505') { 
+      console.log(`⚠️  Conta [${email}] já existe no banco.`);
+    } else {
+      console.log("❌ Erro ao salvar conta no banco:", error.message);
+    }
+    return false;
+  }
+}
+
+
 async function recuperacaoSimples(page) {
     try {
         console.log('🔄 Executando recuperação simples...');
@@ -234,7 +258,7 @@ async function postQuestion(page, question, pointsPerQuestion) {
                     } else {
                         console.log("⚠️  Dropdown de pontos não encontrado, usando o padrão.");
                     }
-                                        
+                    
                     // Aguardar 2 segundos após selecionar a matéria
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     
@@ -400,6 +424,10 @@ async function fazerLogout(page) {
 
 // Função principal que será executada em loop
 async function executarCicloCompleto(browser, cycleCount) {
+    
+    let randomEmail;
+    const passwordParaSalvar = 'senha1234';
+
     try {
         console.log(`\n🔄 INICIANDO CICLO ${cycleCount} 🔄`);
         
@@ -467,7 +495,7 @@ async function executarCicloCompleto(browser, cycleCount) {
         if (!emailInput) emailInput = await signupPage.$('input[placeholder*="email" i], input[placeholder*="e-mail" i], input[placeholder*="Digite seu e-mail" i]');
         
         if (emailInput) {
-            const randomEmail = generateRandomEmail();
+            randomEmail = generateRandomEmail();
             await emailInput.click({ clickCount: 3 });
             await emailInput.type(randomEmail, { delay: 30 });
             console.log(`✅ Email preenchido: ${randomEmail}`);
@@ -542,8 +570,15 @@ async function executarCicloCompleto(browser, cycleCount) {
             if (passwordInput) {
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 await passwordInput.click({ clickCount: 3 });
-                await passwordInput.type('senha1234', { delay: 30 });
-                console.log("✅ Senha preenchida: senha1234");
+                await passwordInput.type(passwordParaSalvar, { delay: 30 });
+                console.log(`✅ Senha preenchida: ${passwordParaSalvar}`);
+
+                if (randomEmail) {
+                    await saveBrainlyAccount(randomEmail, passwordParaSalvar);
+                } else {
+                    console.log("⚠️  Email não foi gerado, impossível salvar no banco.");
+                }
+                
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 
                 // SELECIONAR IDADE ALEATÓRIA
